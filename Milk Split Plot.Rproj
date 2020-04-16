@@ -1,0 +1,295 @@
+```{r,echo=TRUE,warning=FALSE,message=FALSE}
+library(knitr)
+library(ggplot2)
+library(alr4)
+library(tidyverse)
+#
+```
+
+
+```{r , echo=TRUE,warning=FALSE,message=FALSE}
+library(lme4)
+library(gmodels)
+library(emmeans)
+#library(pbkrtest)
+```
+
+
+## Problem Definition
+
+An experiment was conducted in order to
+investigate four different treatments of pasture and two mineral supplements on milk yield. The
+total number of cows available was 24. The experiment was designed as a split-plot, with pasture
+treatments (factor A) assigned to the main plots and mineral supplements (factor B) assigned to
+split-plots. The experiment was replicated in three blocks.
+
+Usage data(data8)
+
+Format
+A data frame with 24 observations on the following 4 variables.
+
+pasture a factor with levels p1 p2 p3 p4
+
+block a numeric vector
+
+mineral a factor with levels m1 m2
+
+milk a numeric vector
+
+```{r , echo=TRUE,message=FALSE,warning=FALSE}
+library(easyanova)
+data(data8)
+data8$block<-as.factor(data8$block)
+```
+
+
+### Summary Statistics
+
+```{r}
+# library(tidyverse) needed for this
+mtm <- data8 %>% group_by(mineral,pasture) %>% summarise(mn = mean(milk))
+mtm
+mtms <- data8 %>% group_by(mineral,pasture) %>% summarise(mn = mean(milk),sd=sd(milk),n=n())
+kable(mtms)
+```
+
+
+### Graphical Displays
+
+```{r,fig.height=6,fig.width=7}
+p <- ggplot(data = mtm, aes(x = mineral, y = mn, group=pasture, colour=pasture))
+p + geom_point(size = 3) + geom_line() + scale_colour_hue("Pasture \nLevel",
+                                                          breaks=c("p1","p2","p3","p4"),
+                                                          labels=c("PTrt1","PTrt2","PTrt3","PTrt4")) + xlab("Mineral Supplement") +
+  ylab("Mean Yield")
+```
+
+
+```{r}
+p <- ggplot(data = data8, aes(x = mineral, y = milk, group=pasture, colour=pasture))
+p + geom_point(size = 3) + geom_line() +
+  facet_wrap(~ block) + 
+  xlab("Mineral Supplement") +
+  ylab("Milk Yield (kg)")
+```
+
+```{r,fig.height=6,fig.width=7}
+p <- ggplot(data = mtm, aes(x = pasture, y = mn, group=mineral, colour=mineral))
+p + geom_point(size = 3) + geom_line() + scale_colour_hue("Mineral \nLevel",
+                                                          breaks=c("m1","m2"),
+                                                          labels=c("Min 1","Min 2")) + xlab("Pasture Treatment") +
+  ylab("Mean Yield (kg)")
+```
+
+```{r}
+p <- ggplot(data = data8, aes(x = pasture, y = milk, group=mineral, colour=mineral))
+p + geom_point(size = 3) + geom_line() +
+  facet_wrap(~ block) + 
+  xlab("Pasture") + ylab("Milk Yield (kg)")
+```
+
+
+
+
+## Full Model Results
+
+We begin with a full model split plot analysis.
+
+### aov methods
+
+```{r}
+milk.aov<-aov(milk ~ pasture*mineral + Error(block/pasture), data=data8)
+summary(milk.aov)
+```
+
+
+### lmer methods
+
+```{r}
+milklmer<-lmer(milk ~ pasture*mineral + (1|block/pasture),data=data8, REML=FALSE)
+summary(milklmer)
+```
+
+
+The following anova command tests the effects listed in order so that the interaction test is relevant to view, it is the effect of interaction after adjusting for the main effects of mineral and pasture.
+
+```{r}
+anova(milklmer)
+```
+
+
+#### emmeans analysis of lmer model
+
+```{r}
+# Using emmeans:
+emmeans(milklmer, list(pairwise~pasture|mineral))
+confint(emmeans(milklmer, list(pairwise~pasture|mineral)))
+CLD(emmeans(milklmer, list(pairwise~pasture|mineral)))
+#
+emmeans(milklmer, list(pairwise~mineral|pasture))
+confint(emmeans(milklmer, list(pairwise~mineral|pasture)))
+CLD(emmeans(milklmer, list(pairwise~mineral|pasture)))
+```
+
+```{r}
+emmip(milklmer, mineral ~ pasture)
+emmeans(milklmer, pairwise ~ pasture, at=list(mineral="m1"))
+emmeans(milklmer, pairwise ~ pasture, at=list(mineral="m2"),inference=c(TRUE,TRUE))
+emmeans(milklmer, pairwise ~ pasture | mineral)
+```
+
+
+#### sjPlot Usage
+
+```{r}
+# load required packages
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(ggplot2)
+#
+plot_model(milklmer, type = "pred", terms = c("pasture", "mineral"))
+plot_model(milklmer, type = "pred", terms = c("mineral","pasture"))
+plot_model(milklmer, type = "int")
+plot_model(milklmer, type = "re")
+#
+#plot_residuals(milklmer)
+
+```
+
+
+```{r}
+tab_model(milklmer)
+tab_model(milklmer, p.val = "kr", show.df = TRUE)
+tab_model(milklmer,show.aic=TRUE,show.se=TRUE,show.stat=TRUE,show.re.var = FALSE) 
+```
+
+
+
+#### lmerTest package
+
+```{r}
+library(lmerTest)
+milklmer<-lmer(milk ~ pasture*mineral + (1|block/pasture),data=data8,REML=TRUE)
+anova(milklmer)
+anova(milklmer, type = 2, ddf = "Kenward-Roger")
+summary(milklmer)
+# Compute LS-means:
+# next two lines give excessive output
+#ls_means(milklmer,pairwise=TRUE)
+#difflsmeans(milklmer) 
+ranova(milklmer)
+
+```
+
+
+#### Bootstrap analysis
+
+```{r}
+func1<- function(fit){fixef(fit)}
+bootmc1<-bootMer(milklmer,func1,nsim=500)
+
+length(bootmc1$t[,2])
+
+# compare past 2 - past3 for mineral=m1
+quantile(bootmc1$t[,2]-bootmc1$t[,3],prob=c(0.025,0.975))
+
+# compare mineral=m1 vs m2 at pasture 4
+quantile((-1)*bootmc1$t[,5]-bootmc1$t[,8],prob=c(0.025,0.975))
+#
+```
+
+
+## No Interaction Model
+
+Note next block has REML TRUE, so would be used to examine the block, wplot random effect components.
+
+```{r}
+milklmer2<-lmer(milk ~ pasture + mineral + (1|block/pasture),
+                data=data8, REML=TRUE)
+summary(milklmer2)
+confint(milklmer2,method="profile")
+```
+
+
+
+```{r}
+# Using emmeans:
+emmeans(milklmer2, list(pairwise~pasture))
+emmeans(milklmer2, list(pairwise~mineral))
+confint(emmeans(milklmer2, list(pairwise~pasture)))
+CLD(emmeans(milklmer2, list(pairwise~pasture)))
+```
+
+```{r,eval=TRUE}
+bootmc2<-bootMer(milklmer2,func1,nsim=500)
+
+# Compare Milk Y past2 - past4
+quantile(bootmc2$t[,2]-bootmc2$t[,4],prob=c(0.025,0.975))
+confint(milklmer2,method="boot")
+```
+
+Is the interaction between mineral and pasture significant?  
+  
+  * Use the aov command results to answer.
+
+* Use an anova test between milklmer and milklmer2.
+
+* Do you get the same conclusion?
+  
+  
+  * c) Analysis Conclusions
+
+```{r}
+plot(allEffects(milklmer))
+plot(effect(term="pasture:mineral",mod=milklmer),multiline=TRUE)
+plot(effect(term="pasture:mineral",mod=milklmer,x.var="mineral"),multiline=FALSE)
+```
+
+```{r}
+plot(allEffects(milklmer2))
+plot(effect(term="pasture:mineral",mod=milklmer2),multiline=TRUE)
+plot(effect(term="pasture:mineral",mod=milklmer2,x.var="mineral"),multiline=FALSE)
+```
+
+Produce effect plots for the milklmer2 model, Discuss these items:
+  
+  Pasture Effects
+
+Mineral Effects
+
+
+What treatment combinations produce the most milk?
+  
+  * d) Model Appropriateness
+
+Any problems with the model, Nope, looks good.
+
+
+```{r}
+resids<-resid(milklmer2)
+fittedvals<-fitted(milklmer2)
+milklmerdframe<-data.frame(data8,resids,fittedvals)
+```
+
+```{r}
+p <- ggplot(data = milklmerdframe, aes(x = fittedvals, y = resids))
+p + geom_point(aes(colour=pasture),size = 3) + 
+  geom_hline(yintercept=0) + 
+  facet_wrap(~ block) + 
+  scale_colour_hue("Pasture \nLevel",
+                   breaks=c("p1","p2","p3","p4"),
+                   labels=c("PTrt1","PTrt2","PTrt3","PTrt4")) +
+  xlab("Predicted Value") + ylab("Residuals")
+```
+
+
+```{r}
+p <- ggplot(data = milklmerdframe, aes(x = fittedvals, y = resids))
+p + geom_point(aes(colour=pasture),size = 3) + geom_smooth(se=TRUE,span=.75) +
+  geom_hline(yintercept=0) + 
+  scale_colour_hue("Pasture \nLevel",
+                   breaks=c("p1","p2","p3","p4"),
+                   labels=c("PTrt1","PTrt2","PTrt3","PTrt4")) + 
+  xlab("Predicted Value") + ylab("Residuals")
+  ```
